@@ -76,14 +76,29 @@ do Termux e Tailscale nas configurações do Android.
   instalador/atualizador. Teste com `termux-battery-status`. A consulta ocorre a
   cada 30 segundos, com tempo limite para não travar o painel. Se o app não
   responder, a métrica aparece como indisponível. Não precisa de root.
-- **CPU:** o percentual usa a capacidade total detectada, de 0% a 100%. No
-  Galaxy M32 de 8 núcleos, um núcleo ocupado representa aproximadamente 12,5%
-  do total. A leitura usa diferenças dos contadores de `/proc/stat`, amostradas
-  a cada segundo, com alternativas pelo tempo ocioso global de `/proc/uptime`
-  dividido pelos núcleos online ou pelo resumo global de `top`. Intervalos
-  de suspensão/mudança de núcleos são descartados na alternativa por tempo ocioso. A linha `800%cpu`
-  do top é normalizada para 100%; não se somam apenas processos visíveis do
-  Termux. Se o Android impedir essas fontes, o painel informa indisponível.
+- **CPU Termux:** mede somente processos acessíveis pertencentes ao UID do Termux,
+  incluindo Python, Node.js, bots, shells e subprocessos, mesmo que não tenham
+  sido iniciados pelo painel. Não representa a CPU global do Android.
+  A leitura usa `/proc/PID/stat` sem root e sem depender de `/proc/stat`, top,
+  tempo ocioso global ou extensões nativas Python. O cálculo a cada segundo é:
+  `100 × soma dos incrementos de utime+stime ÷ CLK_TCK ÷ intervalo ÷ núcleos`.
+  No Galaxy M32 de 8 núcleos, um núcleo ocupado representa aproximadamente 12,5%
+  do total. A capacidade configurada do aparelho é usada, não apenas a quantidade
+  de núcleos momentaneamente online. O resultado fica entre 0% e 100%.
+  A primeira leitura estabelece a base; não divide o consumo acumulado da vida
+  inteira do processo por um intervalo curto. Cada PID é associado ao horário
+  de nascimento para não confundir PIDs reutilizados. Threads não são somadas
+  novamente e os tempos de filhos acumulados nos pais são ignorados.
+  Um processo novo só tem seu consumo desde o nascimento incluído na primeira
+  observação quando o relógio de boot confirma que ele nasceu dentro do intervalo;
+  processos antigos que ficaram acessíveis recebem primeiro uma base própria.
+  Processos desaparecidos não geram deltas negativos. Se um processo terminar e
+  desaparecer entre leituras, seu consumo final pode não ser recuperado; um
+  processo criado e encerrado inteiramente entre amostras pode não ser visto.
+  Isso é um limite de amostragem, não uma tentativa de estimar CPU global.
+  Falhas completas e pausas acima de 10 segundos reiniciam a base de coleta.
+  Se nenhum processo puder ser lido, aparece indisponível. RAM, bateria, uptime
+  e gráficos mantêm o funcionamento anterior; a linha de CPU passa a ser Termux.
 - **Uptime:** é o tempo desta execução do servidor TERMUX CONTROL. Reinicia
   quando o servidor é reiniciado; não mostra o tempo desde o boot do Android.
 

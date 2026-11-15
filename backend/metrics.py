@@ -3,7 +3,6 @@ import json
 import math
 import os
 import platform
-import re
 import signal
 import shutil
 import time
@@ -30,14 +29,41 @@ async def command_output(*command, timeout=4):
         raise
 
 
-def top_cpu(output):
-    # Android top reports e.g. 800%cpu; normalize the aggregate, never sum visible processes.
-    samples = re.findall(r'([\d.]+)%cpu[^\n]*?([\d.]+)%idle', output, re.I)
-    if samples:
-        total, idle = map(float, samples[-1])
-        return round(max(0, min(100, 100 * (total - idle) / total)), 1) if total > 0 else None
-    samples = re.findall(r'%Cpu\(s\):[^\n]*?([\d.]+)\s+id\b', output, re.I)
-    return round(max(0, min(100, 100 - float(samples[-1]))), 1) if samples else None
+def process_cpu_time(text, pid):
+    prefix, opening, rest = text.partition('(')
+    _, closing, tail = rest.rpartition(')')
+    if not opening or not closing or int(prefix.strip()) != pid:
+        raise ValueError('Identidade de processo inválida')
+    fields = tail.split()  # Field 3 (state) follows comm, which may contain spaces and parentheses.
+    user, system, started = int(fields[11]), int(fields[12]), int(fields[19])
+    if min(user, system, started) < 0:
+        raise ValueError('Contadores de processo inválidos')
+    # utime/stime already include this process's threads; never add cutime/cstime or /task entries.
+    return started, user + system
+
+
+def process_cpu_snapshot():
+    uid = os.getuid()
+    counters = {}
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            with (entry / 'stat').open(encoding='utf-8', errors='replace') as stream:
+                pid = int(entry.name)
+                started, ticks = process_cpu_time(stream.read(), pid)
+                if os.fstat(stream.fileno()).st_uid != uid:
+                    # Non-dumpable processes may expose root-owned proc files despite having our UID.
+                    owners = [line.split()[1] for line in (entry / 'status').read_text().splitlines() if line.startswith('Uid:')]
+                    if not owners or int(owners[0]) != uid:
+                        continue
+                    same_start, ticks = process_cpu_time((entry / 'stat').read_text(), pid)
+                    if same_start != started:
+                        continue
+                counters[pid, started] = ticks
+        except (OSError, ValueError, IndexError):
+            continue  # A process may exit or become inaccessible while /proc is being scanned.
+    return counters
 
 
 def battery_data(data):
@@ -59,60 +85,56 @@ class Metrics:
         self.root = root
         self.started = time.monotonic()
         self.previous = None
-        self.previous_idle = None
         self.cpu = None
         self.cpu_source = None
         self.cores = os.cpu_count()
+        self.clock_ticks = None
+        try:
+            configured = os.sysconf('SC_NPROCESSORS_CONF')
+            self.cores = configured if configured > 0 else self.cores
+            ticks = os.sysconf('SC_CLK_TCK')
+            self.clock_ticks = ticks if ticks > 0 else None
+        except (AttributeError, OSError, ValueError):
+            pass
+        self.cpu_processes = 0
+        self.cpu_message = 'Aguardando duas amostras de processos do Termux.'
         self.battery = dict(percentage=None, temperature=None, status='UNKNOWN', charging=None, available=False, message='Aguardando Termux:API')
 
     async def update_cpu(self):
+        self.cpu = None
         try:
-            lines = Path('/proc/stat').read_text().splitlines()
-            fields = [int(v) for v in lines[0].split()[1:9]]
-            if lines[0].split()[0] != 'cpu' or len(fields) < 5:
-                raise ValueError('Contadores inválidos')
-            self.cores = sum(bool(re.match(r'^cpu\d+\s', line)) for line in lines) or self.cores
-            total, idle = sum(fields), fields[3] + fields[4]
-            self.cpu = None
-            if self.previous:
-                elapsed, idle_elapsed = total - self.previous[0], idle - self.previous[1]
-                if elapsed > 0 and idle_elapsed >= 0:
-                    self.cpu = round(max(0, min(100, 100 * (elapsed - idle_elapsed) / elapsed)), 1)
-            self.previous = total, idle
-            self.cpu_source = 'proc_stat'
-            return
-        except (OSError, ValueError, IndexError):
-            self.previous = None
-        try:
-            # /proc/uptime's second field is idle seconds summed across CPUs, not a load average.
-            wall, idle = map(float, Path('/proc/uptime').read_text().split()[:2])
-            cores = os.sysconf('SC_NPROCESSORS_ONLN')
-            clock = time.monotonic()
-            if not all(math.isfinite(value) and value >= 0 for value in (wall, idle)) or cores < 1:
-                raise ValueError('Contadores inválidos')
-            self.cpu = None
-            if self.previous_idle and self.previous_idle[2] == cores:
-                elapsed = wall - self.previous_idle[0]
-                idle_elapsed = idle - self.previous_idle[1]
-                awake = clock - self.previous_idle[3]
-                if 0 < elapsed <= 10 and idle_elapsed >= 0 and abs(elapsed - awake) <= max(0.2, elapsed * 0.1):
-                    self.cpu = round(max(0, min(100, 100 * (1 - idle_elapsed / (elapsed * cores)))), 1)
-            self.previous_idle = wall, idle, cores, clock
-            self.cores = cores
-            self.cpu_source = 'proc_uptime'
-            return
-        except (OSError, ValueError, IndexError, AttributeError):
-            self.previous_idle = None
-        executable = '/system/bin/top' if Path('/system/bin/top').is_file() else shutil.which('top')
-        if executable and os.name == 'posix':
+            if not self.clock_ticks or not self.cores:
+                raise OSError('Temporização de processos indisponível')
+            now = time.monotonic()
             try:
-                self.cpu = top_cpu(await command_output(executable, '-b', '-n', '2', '-d', '1', '-p', str(os.getpid())))
-                self.cpu_source = 'top' if self.cpu is not None else None
-            except (OSError, ValueError, asyncio.TimeoutError):
-                pass
-            else:
-                return
-        self.cpu = self.cpu_source = None
+                boot = time.clock_gettime(time.CLOCK_BOOTTIME) * self.clock_ticks
+            except (AttributeError, OSError, ValueError):
+                boot = None
+            current = process_cpu_snapshot()
+            if not current:
+                raise OSError('Nenhum processo acessível')
+        except (OSError, AttributeError):
+            self.previous = None
+            self.cpu_source = None
+            self.cpu_processes = 0
+            self.cpu_message = 'Não foi possível ler os processos do usuário Termux.'
+            return
+        self.cpu_source = 'proc_pid_stat'
+        self.cpu_processes = len(current)
+        self.cpu_message = 'Aguardando duas amostras de processos do Termux.'
+        if self.previous:
+            clock, previous_boot, previous = self.previous
+            elapsed = now - clock
+            if 0 < elapsed <= 10:
+                used = 0
+                for identity, ticks in current.items():
+                    if identity in previous:
+                        used += max(0, ticks - previous[identity])
+                    elif previous_boot is not None and identity[1] >= previous_boot:
+                        used += ticks  # This process was born inside the measured interval.
+                self.cpu = round(max(0, min(100, 100 * used / self.clock_ticks / elapsed / self.cores)), 1)
+                self.cpu_message = 'Soma dos processos acessíveis do usuário Termux; não é a CPU global do Android.'
+        self.previous = now, boot, current
 
     async def monitor_cpu(self):
         while True:
@@ -148,7 +170,7 @@ class Metrics:
             pass
         disk = shutil.disk_usage(self.root)
         uptime = max(0, time.monotonic() - self.started)
-        return dict(cpu=self.cpu, cpu_cores=self.cores, cpu_source=self.cpu_source, battery=self.battery.copy(), memory=memory, disk=dict(total=disk.total, used=disk.used, percent=round(disk.used / disk.total * 100, 1)), uptime=uptime, server_uptime=uptime, device=platform.node(), platform=platform.system(), time=time.time())
+        return dict(cpu=self.cpu, cpu_cores=self.cores, cpu_source=self.cpu_source, cpu_processes=self.cpu_processes, cpu_message=self.cpu_message, battery=self.battery.copy(), memory=memory, disk=dict(total=disk.total, used=disk.used, percent=round(disk.used / disk.total * 100, 1)), uptime=uptime, server_uptime=uptime, device=platform.node(), platform=platform.system(), time=time.time())
 
 
 async def tailscale_status():
