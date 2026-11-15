@@ -109,10 +109,17 @@ def create_app(config=None, tmux=None):
     @asynccontextmanager
     async def lifespan(app):
         nonlocal network
+        metrics.started = time.monotonic()
+        monitors = [asyncio.create_task(metrics.monitor_cpu()), asyncio.create_task(metrics.monitor_battery())]
         network = await tailscale_status()
         store.event('Servidor iniciado')
-        yield
-        store.db.close()
+        try:
+            yield
+        finally:
+            for task in monitors:
+                task.cancel()
+            await asyncio.gather(*monitors, return_exceptions=True)
+            store.db.close()
 
     async def health(request):
         return JSONResponse(dict(ok=True))

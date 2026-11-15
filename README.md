@@ -68,6 +68,72 @@ Para iniciar após reboot, instale Termux:Boot da mesma origem do Termux, abra e
 app uma vez e execute `bash scripts/install-boot.sh`. Retire restrições de bateria
 do Termux e Tailscale nas configurações do Android.
 
+## Bateria, CPU e uptime
+
+- **Bateria:** porcentagem, temperatura em °C e estado de carregamento vêm de
+  `termux-battery-status`. Instale o **aplicativo Termux:API da mesma origem e
+  assinatura do seu Termux**; o pacote de comandos `termux-api` é preparado pelo
+  instalador/atualizador. Teste com `termux-battery-status`. A consulta ocorre a
+  cada 30 segundos, com tempo limite para não travar o painel. Se o app não
+  responder, a métrica aparece como indisponível. Não precisa de root.
+- **CPU:** o percentual usa a capacidade total detectada, de 0% a 100%. No
+  Galaxy M32 de 8 núcleos, um núcleo ocupado representa aproximadamente 12,5%
+  do total. A leitura usa diferenças dos contadores de `/proc/stat`, amostradas
+  a cada segundo, com alternativas pelo tempo ocioso global de `/proc/uptime`
+  dividido pelos núcleos online ou pelo resumo global de `top`. Intervalos
+  de suspensão/mudança de núcleos são descartados na alternativa por tempo ocioso. A linha `800%cpu`
+  do top é normalizada para 100%; não se somam apenas processos visíveis do
+  Termux. Se o Android impedir essas fontes, o painel informa indisponível.
+- **Uptime:** é o tempo desta execução do servidor TERMUX CONTROL. Reinicia
+  quando o servidor é reiniciado; não mostra o tempo desde o boot do Android.
+
+## Atualizar sem reinstalar
+
+Depois da primeira atualização, execute somente:
+
+```bash
+cd ~/termux-control
+bash update.sh
+```
+
+Se sua instalação ainda não tem `update.sh`, aplique a primeira atualização assim:
+
+```bash
+cd ~/termux-control
+git fetch origin main && git show FETCH_HEAD:update.sh | bash
+```
+
+Só execute a última linha se o fetch concluir sem erro. Esse bootstrap carrega o
+atualizador do mesmo repositório sem substituir antes os arquivos em execução.
+Depois de concluir, recarregue o dashboard no PC (Ctrl+F5) para carregar os cards novos.
+
+O atualizador aceita apenas `origin` apontando para este repositório, na branch
+`main`, e faz avanço linear do histórico. Recusa alterações locais em arquivos
+versionados e conflitos com arquivos não versionados; não usa limpeza forçada.
+Não modifica `.env`, configuração, credenciais, banco, favoritos, logs nem o
+socket tmux de trabalho. Arquivos `.env` são preservados, mas não passam a ser
+interpretados automaticamente como configuração pelo aplicativo.
+
+Dependências Python só são alinhadas quando `requirements.txt` muda ou na
+primeira execução sem registro de atualização. Não há `pip --upgrade` geral,
+recriação de `.venv` nem execução do setup. Na primeira atualização, o pacote
+`termux-api` é instalado se ainda faltar. O dashboard já vem compilado.
+
+Se o servidor estava ativo e houve mudança de execução, o atualizador para
+somente o servidor web, aplica os arquivos e o inicia novamente. Sessões de
+terminal e scripts ficam no tmux separado e são preservados enquanto o Android
+mantiver seus processos. Se o servidor estava parado, ele continua parado.
+Execuções sem novidades ou apenas com mudança de documentação não provocam
+reinício depois que o primeiro registro de atualização já existe.
+
+Em falhas, tenta recuperar o commit anterior e as versões de dependências
+registradas em `.local/requirements-before-update.txt`, e iniciar novamente o
+servidor anterior. A recuperação de dependências pode precisar de internet;
+uma interrupção forçada do Android não garante recuperação automática. Confira
+a mensagem final antes de considerar a atualização concluída. Não execute duas
+atualizações simultâneas. Preserve as mesmas variáveis exportadas de estado e
+certificados que você usa para iniciar o serviço.
+
 ## Cuidados importantes
 
 - `0.0.0.0` também escuta no Wi-Fi. Use HTTP apenas pelo endereço Tailscale ou

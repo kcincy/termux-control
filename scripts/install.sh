@@ -10,7 +10,7 @@ if [[ ! -f dist/index.html ]]; then
   echo 'Frontend compilado ausente. Baixe novamente o repositório completo.' >&2
   exit 1
 fi
-pkg install -y python nodejs-lts tmux
+pkg install -y python nodejs-lts tmux termux-api
 python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m backend.cli setup
