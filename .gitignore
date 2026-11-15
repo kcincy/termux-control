@@ -1,0 +1,17 @@
+.venv/
+.local/
+__pycache__/
+*.pyc
+.env
+.env.*
+config.json
+*.sqlite*
+*.db
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+node_modules/
+*.zip

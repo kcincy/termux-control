@@ -1,0 +1,4 @@
+# Pure-Python runtime: no pydantic-core, node-pty, uvloop or httptools.
+starlette>=0.52.1,<1
+uvicorn>=0.54,<1
+wsproto>=1.2,<2
