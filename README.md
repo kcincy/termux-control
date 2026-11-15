@@ -134,6 +134,28 @@ a mensagem final antes de considerar a atualização concluída. Não execute du
 atualizações simultâneas. Preserve as mesmas variáveis exportadas de estado e
 certificados que você usa para iniciar o serviço.
 
+## Colar comandos no terminal
+
+Use **Ctrl+V** na barra ao lado de Esc, Tab e Ctrl+C, ou o ícone de colagem
+superior. Ambos usam o mecanismo `paste` do xterm.js, preservando linhas,
+tabulações, acentos e emojis. Textos longos são transmitidos em blocos sem
+dividir pares Unicode. Não é enviado um Enter adicional.
+
+Em HTTPS ou no próprio localhost, o botão tenta ler o clipboard após seu toque;
+o navegador pode pedir autorização. Se o acesso for negado, abre um campo de
+colagem como alternativa.
+
+**Em HTTP pelo Tailscale**, a leitura automática normalmente é bloqueada pelo
+navegador. O botão abre um campo: use Ctrl+V no PC ou toque e segure → Colar no
+celular, depois confirme **Colar no terminal**. Não é necessário desativar
+proteções do navegador. A VPN não transforma uma página HTTP em contexto HTTPS.
+[Restrição oficial da API de clipboard](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/readText).
+
+A colagem respeita o modo de paste solicitado pelo shell/programa. Revise o
+conteúdo: quebras de linha já presentes podem ser interpretadas pelo programa
+como entrada, conforme o modo em uso. Colar não registra o texto em logs do painel.
+Após atualizar, recarregue o navegador com Ctrl+F5 para carregar o botão novo.
+
 ## Cuidados importantes
 
 - `0.0.0.0` também escuta no Wi-Fi. Use HTTP apenas pelo endereço Tailscale ou
